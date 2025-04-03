@@ -1,87 +1,84 @@
 # Synology Smart Archive
 
-Un outil intelligent d'archivage automatique pour Synology Drive sur macOS.
+Une application web pour gérer intelligemment l'archivage automatique des fichiers sur Synology Drive.
 
 ## Fonctionnalités
 
-- Archivage automatique des fichiers non utilisés depuis 180 jours
-- Conservation de l'accès aux fichiers via des liens symboliques
-- Rotation automatique des logs
-- Statistiques d'utilisation
-- Interface de restauration simple
-- Gestion intelligente de l'espace disque
-- Protection contre les erreurs
+- Archivage automatique des fichiers selon leur âge
+- Interface web intuitive pour gérer les archives
+- Visualisation des fichiers archivés avec recherche
+- Restauration facile des fichiers
+- Statistiques d'archivage en temps réel
+- Logs détaillés des opérations
+- Configuration flexible des critères d'archivage
 
 ## Prérequis
 
-- macOS
-- Synology Drive Client
-- jq (pour la gestion des statistiques)
+- Python 3.8+
+- Flask
+- Synology Drive installé et configuré
+- Accès en lecture/écriture au dossier Synology Drive
 
 ## Installation
 
-1. Clonez le dépôt :
+1. Clonez le repository :
 ```bash
 git clone https://github.com/Gatescrispy/synology-smart-archive.git
 cd synology-smart-archive
 ```
 
-2. Rendez les scripts exécutables :
+2. Créez un environnement virtuel et installez les dépendances :
 ```bash
-chmod +x scripts/*.sh scripts/lib/*.sh
+python -m venv venv
+source venv/bin/activate  # Sur Unix/macOS
+# ou
+.\venv\Scripts\activate  # Sur Windows
+pip install -r requirements.txt
 ```
 
-3. Configurez le chemin de votre Synology Drive dans `config/default.conf`
-
-## Utilisation
-
-### Archivage automatique
-
-Le script s'exécute automatiquement chaque jour à 2h du matin. Pour un lancement manuel :
-
+3. Copiez le fichier de configuration exemple et ajustez-le :
 ```bash
-./scripts/archive_daily.sh
-```
-
-### Restauration
-
-Pour lister les fichiers archivés :
-```bash
-./scripts/restore.sh -l
-```
-
-Pour restaurer un fichier spécifique :
-```bash
-./scripts/restore.sh -r "chemin/vers/fichier"
-```
-
-Pour tout restaurer :
-```bash
-./scripts/restore.sh -a
+cp config/default.conf.example config/default.conf
+# Éditez config/default.conf avec vos paramètres
 ```
 
 ## Configuration
 
-Modifiez `config/default.conf` pour personnaliser :
+Éditez `config/default.conf` pour configurer :
 
+- Le chemin vers votre dossier Synology Drive
 - L'âge minimum des fichiers à archiver
-- Les extensions à exclure
-- Les paramètres de rotation des logs
-- Les limites de ressources
+- Les extensions et dossiers à exclure
+- Les paramètres de logs et notifications
 
-## Logs et Statistiques
+## Utilisation
 
-- Logs principaux : `logs/archive.log`
-- Logs d'erreurs : `logs/error.log`
-- Statistiques : `logs/stats.json`
+1. Démarrez l'application :
+```bash
+python web/app.py
+```
+
+2. Accédez à l'interface web : http://localhost:5000
+
+3. Utilisez les boutons pour :
+   - Lancer l'archivage
+   - Voir/cacher les fichiers archivés
+   - Restaurer des fichiers spécifiques
 
 ## Sécurité
 
-- Validation des chemins de fichiers
-- Vérification des permissions
-- Protection contre les exécutions simultanées
-- Gestion des erreurs avec limite maximale
+- Les fichiers de configuration contenant des informations sensibles sont exclus de Git
+- Les chemins d'accès sont validés pour éviter les attaques par traversée de répertoire
+- Les opérations de fichiers sont sécurisées
+
+## Contribution
+
+1. Fork le projet
+2. Créez votre branche de fonctionnalité
+3. Committez vos changements
+4. Poussez vers la branche
+5. Ouvrez une Pull Request
 
 ## Licence
 
-MIT License - voir le fichier `LICENSE` pour plus de détails.
+MIT License - voir le fichier LICENSE pour plus de détails.

@@ -1,0 +1,39 @@
+# Configuration locale
+config/default.conf
+
+# Logs et données
+logs/
+*.log
+*.json
+
+# Environnement Python
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Environnement de développement
+.env
+.venv
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

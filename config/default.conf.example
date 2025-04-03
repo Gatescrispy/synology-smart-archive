@@ -1,0 +1,42 @@
+# Configuration de Synology Smart Archive
+
+# Chemin vers le dossier Synology Drive
+SYNOLOGY_DRIVE_PATH="/chemin/vers/votre/SynologyDrive"
+
+# Chemin vers le dossier d'archives
+ARCHIVE_PATH="${SYNOLOGY_DRIVE_PATH}/.archives"
+
+# Âge minimum des fichiers à archiver (en jours)
+MIN_AGE_DAYS=180
+
+# Extensions à exclure de l'archivage
+EXCLUDED_EXTENSIONS=".app,.exe,.dmg,.iso,.DS_Store"
+
+# Dossiers à exclure de l'archivage
+EXCLUDED_DIRS="node_modules,vendor,dist,build,.git"
+
+# Configuration des logs
+LOG_DIR="logs"
+MAX_LOG_SIZE="10M"
+LOG_RETENTION_DAYS=30
+
+# Limites de ressources
+MAX_CPU_PERCENT=50
+MAX_MEMORY_MB=512
+
+# Format de date pour les logs
+DATE_FORMAT="%Y-%m-%d %H:%M:%S"
+
+# Niveau de verbosité des logs (DEBUG, INFO, WARNING, ERROR)
+LOG_LEVEL="INFO"
+
+# Paramètres d'archivage
+PARALLEL_JOBS=4
+MAX_ERRORS=5
+
+# Taille minimale d'espace disque requise (en GB)
+MIN_DISK_SPACE=5
+
+# Notifications
+ENABLE_NOTIFICATIONS=true
+NOTIFICATION_EMAIL=""
