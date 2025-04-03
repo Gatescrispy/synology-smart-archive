@@ -1,141 +1,92 @@
 #!/bin/bash
 
-# Configuration des couleurs pour les logs
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
-
-# Configuration des logs
-LOG_DIR="logs"
-MAIN_LOG="${LOG_DIR}/archive.log"
-ERROR_LOG="${LOG_DIR}/error.log"
-MAX_LOG_SIZE=10485760 # 10MB
-
-# Fonction de rotation des logs
-rotate_logs() {
-    local log_file="$1"
-    if [[ -f "$log_file" ]] && [[ $(stat -f%z "$log_file") -gt $MAX_LOG_SIZE ]]; then
-        mv "$log_file" "${log_file}.$(date +%Y%m%d_%H%M%S)"
-        gzip "${log_file}.$(date +%Y%m%d_%H%M%S)"
-    fi
-}
-
-# Fonction de logging améliorée
-log() {
-    local level="$1"
-    local message="$2"
-    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    local json_message="{\"timestamp\":\"$timestamp\",\"level\":\"$level\",\"message\":\"$message\"}"
+# Fonction pour convertir les tailles en octets
+convert_to_bytes() {
+    local size=$1
+    local unit=${size: -1}
+    local value=${size%?}
     
-    # Rotation des logs si nécessaire
-    rotate_logs "$MAIN_LOG"
-    rotate_logs "$ERROR_LOG"
-    
-    # Log dans le fichier principal
-    echo "$json_message" >> "$MAIN_LOG"
-    
-    # Log les erreurs séparément
-    if [[ "$level" == "ERROR" ]]; then
-        echo "$json_message" >> "$ERROR_LOG"
-    fi
-    
-    # Affichage console avec couleurs
-    case "$level" in
-        "ERROR")
-            echo -e "${RED}[ERROR]${NC} $message" >&2
-            ;;
-        "WARNING")
-            echo -e "${YELLOW}[WARNING]${NC} $message"
-            ;;
-        "SUCCESS")
-            echo -e "${GREEN}[SUCCESS]${NC} $message"
-            ;;
-        *)
-            echo "[INFO] $message"
-            ;;
+    case $unit in
+        K) echo $((value * 1024));;
+        M) echo $((value * 1024 * 1024));;
+        G) echo $((value * 1024 * 1024 * 1024));;
+        *) echo $size;;
     esac
 }
 
-# Fonction de validation des chemins
-validate_path() {
-    local path="$1"
-    
-    # Vérification des caractères dangereux
-    if [[ "$path" =~ [[:cntrl:]] || "$path" =~ [\'\"\\\ ] ]]; then
-        log "ERROR" "Chemin invalide détecté: $path"
-        return 1
-    fi
-    
-    # Vérification des permissions
-    if [[ ! -r "$path" ]]; then
-        log "ERROR" "Permissions insuffisantes pour lire: $path"
-        return 1
-    fi
-    
-    return 0
-}
-
-# Fonction de vérification d'espace disque
+# Fonction pour vérifier l'espace disque
 check_disk_space() {
-    local dir="$1"
-    local min_space=5242880 # 5GB en KB
+    local required_space=$1
+    local path=$2
     
-    local available_space=$(df -k "$dir" | awk 'NR==2 {print $4}')
+    # Convertir la taille requise en octets
+    local required_bytes=$(convert_to_bytes "$required_space")
     
-    if [[ $available_space -lt $min_space ]]; then
-        log "ERROR" "Espace disque insuffisant dans $dir: $available_space KB disponible"
+    # Récupérer l'espace disponible
+    local available_space=$(df -B1 "$path" | awk 'NR==2 {print $4}')
+    
+    if [ $available_space -lt $required_bytes ]; then
         return 1
     fi
-    
     return 0
 }
 
-# Fonction de statistiques
-update_stats() {
-    local file_size="$1"
-    local action="$2"
-    local stats_file="logs/stats.json"
+# Fonction pour la gestion des verrous
+acquire_lock() {
+    local lock_file="/tmp/synology_archive.lock"
     
-    # Création du fichier de stats s'il n'existe pas
-    if [[ ! -f "$stats_file" ]]; then
-        echo '{"total_files":0,"total_size":0,"last_run":""}' > "$stats_file"
-    fi
-    
-    # Mise à jour des statistiques
-    local total_files=$(jq '.total_files + 1' "$stats_file")
-    local total_size=$(jq ".total_size + $file_size" "$stats_file")
-    local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    
-    jq --arg ts "$timestamp" \
-       --argjson tf "$total_files" \
-       --argjson ts "$total_size" \
-       '.total_files = $tf | .total_size = $ts | .last_run = $ts' \
-       "$stats_file" > "${stats_file}.tmp" && mv "${stats_file}.tmp" "$stats_file"
-}
-
-# Fonction de vérification de processus
-check_process_running() {
-    local script_name="$1"
-    local pid_file="/tmp/${script_name}.pid"
-    
-    # Vérification si le fichier PID existe
-    if [[ -f "$pid_file" ]]; then
-        local pid=$(cat "$pid_file")
-        if ps -p "$pid" > /dev/null; then
-            log "WARNING" "Une instance est déjà en cours d'exécution (PID: $pid)"
+    # Vérifier si le verrou existe
+    if [ -f "$lock_file" ]; then
+        local pid=$(cat "$lock_file")
+        if [ -d "/proc/$pid" ]; then
+            log "ERROR" "Une autre instance du script est en cours d'exécution"
             return 1
         fi
     fi
     
-    # Création du fichier PID
-    echo $$ > "$pid_file"
+    # Créer le verrou
+    echo $$ > "$lock_file"
+    
+    # Nettoyer le verrou à la sortie
+    trap "rm -f $lock_file" EXIT
+    
     return 0
 }
 
-# Fonction de nettoyage
-cleanup() {
-    local script_name="$1"
-    rm -f "/tmp/${script_name}.pid"
-    log "INFO" "Nettoyage effectué"
+# Fonction de logging
+log() {
+    local level=$1
+    local message=$2
+    local timestamp=$(date +'%Y-%m-%d %H:%M:%S')
+    local log_file="logs/archive.log"
+    
+    # Créer le dossier de logs si nécessaire
+    mkdir -p "$(dirname "$log_file")"
+    
+    # Formater le message en JSON
+    echo "{\"timestamp\":\"$timestamp\",\"level\":\"$level\",\"message\":\"$message\"}" >> "$log_file"
+    
+    # Afficher aussi dans la console
+    echo "[$timestamp] $level $message"
+}
+
+# Fonction pour nettoyer les anciens logs
+cleanup_logs() {
+    local max_size=$1
+    local retention_days=$2
+    local log_dir=$3
+    
+    # Supprimer les logs plus vieux que retention_days jours
+    find "$log_dir" -name "*.log" -type f -mtime +"$retention_days" -delete
+    
+    # Vérifier la taille des fichiers de log
+    local log_size=$(du -sb "$log_dir" 2>/dev/null | cut -f1)
+    local max_bytes=$(convert_to_bytes "$max_size")
+    
+    if [ -n "$log_size" ] && [ "$log_size" -gt "$max_bytes" ]; then
+        # Garder seulement les derniers logs
+        for log_file in $(find "$log_dir" -name "*.log" -type f -printf '%T@ %p\n' | sort -n | head -n -10 | cut -d' ' -f2-); do
+            rm -f "$log_file"
+        done
+    fi
 }

@@ -1,112 +1,99 @@
 #!/bin/bash
 
-# Import des fonctions communes
+# Charger les fonctions communes et la configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/common.sh"
+source "${SCRIPT_DIR}/../config/default.conf"
 
-# Chargement de la configuration
-CONFIG_FILE="${SCRIPT_DIR}/../config/default.conf"
-if [[ -f "$CONFIG_FILE" ]]; then
-    source "$CONFIG_FILE"
-else
-    log "ERROR" "Fichier de configuration non trouvé: $CONFIG_FILE"
+# Vérifier que le dossier source existe
+if [ ! -d "$SYNOLOGY_DRIVE_PATH" ]; then
+    log "ERROR" "Le dossier source n'existe pas: $SYNOLOGY_DRIVE_PATH"
+    exit 1
+ fi
+
+# Acquérir le verrou
+if ! acquire_lock; then
     exit 1
 fi
 
-# Vérification du processus
-if ! check_process_running "archive_daily"; then
-    log "ERROR" "Une autre instance du script est en cours d'exécution"
+# Vérifier l'espace disque
+if ! check_disk_space "${MIN_DISK_SPACE}G" "$SYNOLOGY_DRIVE_PATH"; then
+    log "ERROR" "Espace disque insuffisant (minimum ${MIN_DISK_SPACE}G requis)"
     exit 1
 fi
 
-# Fonction de nettoyage à la sortie
-trap 'cleanup "archive_daily"' EXIT
+# Créer le dossier d'archives si nécessaire
+mkdir -p "$ARCHIVE_PATH"
 
-# Création des répertoires nécessaires
-mkdir -p "$LOG_DIR" "$ARCHIVE_DIR"
-
-# Vérification de l'espace disque
-if ! check_disk_space "$ARCHIVE_DIR"; then
-    log "ERROR" "Espace disque insuffisant"
-    exit 1
-fi
-
-# Fonction d'archivage d'un fichier
-archive_file() {
-    local file="$1"
-    local relative_path="${file#$SOURCE_DIR/}"
-    local archive_path="$ARCHIVE_DIR/$relative_path"
-    local archive_dir="$(dirname "$archive_path")"
+# Construire les options d'exclusion pour find
+build_find_options() {
+    local options=""
     
-    # Validation du chemin
-    if ! validate_path "$file"; then
-        return 1
-    fi
-    
-    # Vérification des extensions exclues
-    for ext in $EXCLUDED_EXTENSIONS; do
-        if [[ "$file" == *"$ext" ]]; then
-            log "INFO" "Fichier ignoré (extension exclue): $file"
-            return 0
-        fi
+    # Exclure les dossiers
+    IFS=',' read -ra DIRS <<< "$EXCLUDED_DIRS"
+    for dir in "${DIRS[@]}"; do
+        options="$options -not -path '*/$dir/*'"
     done
     
-    # Création du répertoire d'archive si nécessaire
-    mkdir -p "$archive_dir"
+    # Exclure les extensions
+    IFS=',' read -ra EXTS <<< "$EXCLUDED_EXTENSIONS"
+    for ext in "${EXTS[@]}"; do
+        options="$options -not -name '*$ext'"
+    done
     
-    # Déplacement du fichier
-    if mv "$file" "$archive_path"; then
-        # Création du lien symbolique
-        ln -s "$archive_path" "$file"
-        
-        # Mise à jour des statistiques
-        local file_size=$(stat -f%z "$archive_path")
-        update_stats "$file_size" "archive"
-        
-        log "SUCCESS" "Fichier archivé: $file -> $archive_path"
-        return 0
-    else
-        log "ERROR" "Échec de l'archivage: $file"
-        return 1
+    echo "$options"
+}
+
+# Rechercher les fichiers à archiver
+log "INFO" "Recherche des fichiers plus vieux que $MIN_AGE_DAYS jours dans $SYNOLOGY_DRIVE_PATH"
+
+# Construire la commande find avec les exclusions
+find_cmd="find \"$SYNOLOGY_DRIVE_PATH\" -type f -mtime +\"$MIN_AGE_DAYS\" $(build_find_options) -print0"
+
+# Compteurs
+files_processed=0
+errors=0
+total_size=0
+
+# Traiter les fichiers
+while IFS= read -r -d '' file; do
+    # Vérifier si le fichier existe toujours
+    if [ ! -f "$file" ]; then
+        continue
     fi
-}
-
-# Fonction principale
-main() {
-    local error_count=0
-    local processed_files=0
-    local start_time=$(date +%s)
     
-    log "INFO" "Début de l'archivage"
+    # Calculer le chemin relatif
+    relative_path=${file#$SYNOLOGY_DRIVE_PATH/}
+    destination="$ARCHIVE_PATH/$relative_path"
     
-    # Recherche des fichiers à archiver
-    while IFS= read -r -d '' file; do
-        if (( error_count >= MAX_ERRORS )); then
-            log "ERROR" "Nombre maximum d'erreurs atteint ($MAX_ERRORS)"
-            return 1
+    # Créer le dossier de destination
+    mkdir -p "$(dirname "$destination")"
+    
+    # Déplacer le fichier
+    if mv "$file" "$destination"; then
+        size=$(stat -f %z "$destination")
+        total_size=$((total_size + size))
+        files_processed=$((files_processed + 1))
+        log "SUCCESS" "Archivé: $relative_path ($(numfmt --to=iec-i --suffix=B --format="%.1f" $size))"
+    else
+        errors=$((errors + 1))
+        log "ERROR" "Erreur lors de l'archivage de: $relative_path"
+        if [ $errors -ge $MAX_ERRORS ]; then
+            log "ERROR" "Trop d'erreurs rencontrées ($errors), arrêt de l'archivage"
+            exit 1
         fi
-        
-        if ! archive_file "$file"; then
-            ((error_count++))
-        fi
-        ((processed_files++))
-        
-    done < <(find "$SOURCE_DIR" -type f -not -path "*/archives/*" -atime "+$MIN_AGE_DAYS" -print0)
-    
-    local end_time=$(date +%s)
-    local duration=$((end_time - start_time))
-    
-    # Rapport final
-    log "INFO" "Archivage terminé en $duration secondes"
-    log "INFO" "Fichiers traités: $processed_files"
-    log "INFO" "Erreurs rencontrées: $error_count"
-    
-    # Nettoyage des anciens logs
-    find "$LOG_DIR" -name "*.gz" -mtime "+$LOG_RETENTION_DAYS" -delete
-    
-    return $((error_count > 0))
-}
+    fi
+done < <(eval "$find_cmd")
 
-# Exécution
-main
-exit $?
+# Résultat final
+if [ $files_processed -eq 0 ]; then
+    log "INFO" "Aucun fichier trouvé à archiver"
+else
+    log "SUCCESS" "Archivage terminé avec succès"
+    log "INFO" "Archivage terminé - Fichiers: $files_processed, Erreurs: $errors, Taille totale: $(numfmt --to=iec-i --suffix=B --format="%.1f" $total_size)"
+fi
+
+# Nettoyer les logs
+cleanup_logs "$MAX_LOG_SIZE" "$LOG_RETENTION_DAYS" "$LOG_DIR"
+
+exit 0
